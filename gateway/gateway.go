@@ -30,5 +30,6 @@ func HTTPProxy(proxyAddr string, serviceAddr string) {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("/api/v1/countries", grpcGWMux)
+	mux.Handle("/api/v1/countries/", grpcGWMux)
 	log.Fatalln(http.ListenAndServe(proxyAddr, mux))
 }

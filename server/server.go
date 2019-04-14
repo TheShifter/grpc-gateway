@@ -1,85 +1,113 @@
 package server
 
 import (
-	"../database/config"
-	"../database/model"
+	"../dao/entities"
+	. "../dao/implementations"
+	"../dao/interfaces"
 	pb "../proto"
-	"fmt"
+	"errors"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 	"log"
 	"net"
 )
 
+const api = "v1"
+
 type server struct {
 }
 
-func (s *server) Create(ctx context.Context, in *pb.CreateRequest) (*pb.CreateResponse, error) {
-	db, err := config.GetMySQLDB()
-	defer db.Close()
-	if err != nil {
-		fmt.Println(err)
+func checkAPI(reqAPI string) error {
+	if len(reqAPI) > 0 {
+		if reqAPI != api {
+			return status.Errorf(codes.Unimplemented,
+				"unsupported API version: service implements"+
+					" API version '%s', but asked for '%s'", api, reqAPI)
+		}
+	} else {
+		return errors.New("API version is empty")
 	}
-	countryModel := model.Database{Db: db}
-	err = countryModel.Create(in.Country)
-	if err != nil {
-		log.Fatalln("country hasn't been added")
-	}
-	return &pb.CreateResponse{"golang-grpc", in.Country.Id}, nil
+	return nil
 }
-
-func (s *server) Read(ctx context.Context, in *pb.ReadRequest) (*pb.ReadResponse, error) {
-	db, err := config.GetMySQLDB()
-	defer db.Close()
-	if err != nil {
-		fmt.Println(err)
-	}
-	countryModel := model.Database{Db: db}
-	country, err := countryModel.Read(in.Id)
+func (s *server) Read(ctx context.Context, req *pb.ReadRequest) (*pb.ReadResponse, error) {
+	var country *entities.Country
+	var dao interfaces.CountryDAO
+	dao = CountryDAOImpl{}
+	country, err := dao.Read(req.Id)
 	if err != nil {
 		log.Fatalln("country hasn't been read")
 	}
-	return &pb.ReadResponse{"golang-grpc", &country}, nil
-}
-func (s *server) Update(ctx context.Context, in *pb.UpdateRequest) (*pb.UpdateResponse, error) {
-	db, err := config.GetMySQLDB()
-	defer db.Close()
-	if err != nil {
-		fmt.Println(err)
+	respCountry := pb.Country{
+		Id:           country.Id,
+		Name:         country.Name,
+		PeopleNumber: country.PeopleNumber,
 	}
-	countryModel := model.Database{Db: db}
-	err = countryModel.Update(in.Country)
+	return &pb.ReadResponse{Api: api, Country: &respCountry}, nil
+}
+func (s *server) Create(ctx context.Context, req *pb.CreateRequest) (*pb.CreateResponse, error) {
+	if err := checkAPI(req.GetApi()); err != nil {
+		return nil, err
+	}
+	country := entities.Country{
+		Name:         req.Country.Name,
+		PeopleNumber: req.Country.PeopleNumber,
+	}
+	var dao interfaces.CountryDAO
+	dao = CountryDAOImpl{}
+	id, err := dao.Create(&country)
+	if err != nil {
+		log.Fatalln("country hasn't been added")
+	}
+	return &pb.CreateResponse{Api: api, Id: id}, nil
+}
+
+func (s *server) Update(ctx context.Context, req *pb.UpdateRequest) (*pb.UpdateResponse, error) {
+	if err := checkAPI(req.Api); err != nil {
+		return nil, err
+	}
+	country := entities.Country{
+		Id:           req.Id,
+		Name:         req.Country.Name,
+		PeopleNumber: req.Country.PeopleNumber,
+	}
+	var dao interfaces.CountryDAO
+	dao = CountryDAOImpl{}
+	err := dao.Update(&country)
 	if err != nil {
 		log.Fatalln("country hasn't been updated")
 	}
-	return &pb.UpdateResponse{"golang-grpc", in.Country.Id}, nil
+	return &pb.UpdateResponse{Api: api, Updated: req.Country.Id}, nil
 }
-func (s *server) Delete(ctx context.Context, in *pb.DeleteRequest) (*pb.DeleteResponse, error) {
-	db, err := config.GetMySQLDB()
-	defer db.Close()
+func (s *server) Delete(ctx context.Context, req *pb.DeleteRequest) (*pb.DeleteResponse, error) {
+	var dao interfaces.CountryDAO
+	dao = CountryDAOImpl{}
+	err := dao.Delete(req.Id)
 	if err != nil {
-		fmt.Println(err)
+		log.Fatalln("country hasn't been read")
 	}
-	countryModel := model.Database{Db: db}
-	err = countryModel.Delete(in.Id)
-	if err != nil {
-		log.Fatalln("country hasn't been deleted")
-	}
-	return &pb.DeleteResponse{"golang-grpc", in.Id}, nil
+	return &pb.DeleteResponse{Api: api, Deleted: req.Id}, nil
 }
-func (s *server) ReadAll(ctx context.Context, in *pb.ReadAllRequest) (*pb.ReadAllResponse, error) {
-	db, err := config.GetMySQLDB()
-	defer db.Close()
+func (s *server) ReadAll(ctx context.Context, req *pb.ReadAllRequest) (*pb.ReadAllResponse, error) {
+	var dao interfaces.CountryDAO
+	dao = CountryDAOImpl{}
+	var countries []*entities.Country
+	countries, err := dao.ReadAll()
 	if err != nil {
-		fmt.Println(err)
+		log.Fatalln("countries haven't been read")
 	}
-	countryModel := model.Database{Db: db}
-	countries, err := countryModel.ReadAll()
-	if err != nil {
-		log.Fatalln("countries haven't been received")
+	var respCountries []*pb.Country
+	for i := 0; i < len(countries); i++ {
+		country := &pb.Country{
+			Name:         countries[i].Name,
+			PeopleNumber: countries[i].PeopleNumber,
+		}
+		respCountries = append(respCountries, country)
 	}
-	return &pb.ReadAllResponse{"golang-grpc", countries}, nil
+
+	return &pb.ReadAllResponse{Api: api, Country: respCountries}, nil
 }
 
 func GRPCService(serviceAddr string) {
